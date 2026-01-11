@@ -1,0 +1,32 @@
+{
+  "mindUrl": "blob:https://hiukim.github.io/3aec30ef-cffe-4d93-a17e-1208d3ebaa93",
+  "model": {
+    "url": "https://raw.githubusercontent.com/GoldBean216/WebAssets/refs/heads/main/AR/Stage/stage.glb",
+    "scale": {
+      "x": 0.54,
+      "y": 0.54,
+      "z": 0.54
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "position": {
+      "x": 0,
+      "y": 0,
+      "z": 0.15
+    }
+  },
+  "room": {
+    "width": 1,
+    "height": 0.5785997357992074,
+    "depth": 1
+  },
+  "referenceImage": {
+    "url": "https://raw.githubusercontent.com/GoldBean216/WebAssets/main/AR/Stage/stage.png",
+    "textureId": "#tex-1768129965961",
+    "aspectRatio": 0.5785997357992074,
+    "visible": false
+  }
+}
