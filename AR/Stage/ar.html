@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>WebXR AR Portal</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.2/dist/aframe-master.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js" crossorigin="anonymous"></script>
+    
+    <style>
+      /* 基础设置：禁止用户缩放，适配刘海屏 */
+      body { 
+        margin: 0; 
+        overflow: hidden; 
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+        background: #1a1a1a; 
+        color: white; 
+        -webkit-tap-highlight-color: transparent; /* 移除点击高亮 */
+      }
+      
+      .mindar-ui-overlay, .mindar-ui-loading, .mindar-ui-scanning { display: none !important; }
+
+      .view-section {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        display: flex; flex-direction: column; z-index: 10;
+        background: #1a1a1a; overflow-y: auto; transition: opacity 0.3s;
+        padding-bottom: env(safe-area-inset-bottom); /* 适配底部安全区 */
+      }
+      .view-section.hidden { display: none !important; opacity: 0; pointer-events: none; }
+
+      #view-home { align-items: center; padding: 40px 20px; text-align: center; }
+      .logo { font-size: 24px; font-weight: bold; margin-bottom: 40px; color: #4fc3f7; }
+      
+      .card-grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px; width: 100%; max-width: 800px; margin-bottom: 40px;
+      }
+      .card {
+        background: #2d2d2d; padding: 30px; border-radius: 12px; cursor: pointer;
+        transition: transform 0.2s, background 0.2s; border: 1px solid #444;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+      }
+      .card:hover { transform: translateY(-5px); background: #333; border-color: #4fc3f7; }
+      .card-icon { font-size: 40px; margin-bottom: 15px; }
+      .card-title { font-size: 18px; font-weight: bold; }
+      .card-desc { font-size: 12px; color: #aaa; margin-top: 5px; }
+
+      /* JSON Config */
+      .config-section {
+        background: #252525; padding: 20px; border-radius: 8px;
+        width: 100%; max-width: 800px; text-align: left; border-top: 2px solid #FF9800;
+        box-sizing: border-box; /* 防止padding撑开宽度 */
+      }
+      .config-tabs { display: flex; margin-bottom: 15px; border-bottom: 1px solid #444; overflow-x: auto; }
+      .tab-btn {
+        background: transparent; border: none; color: #aaa; padding: 10px 20px; cursor: pointer;
+        border-bottom: 2px solid transparent; white-space: nowrap;
+      }
+      .tab-btn.active { color: #FF9800; border-bottom-color: #FF9800; }
+      
+      .input-area { margin-bottom: 15px; }
+      textarea { width: 100%; height: 100px; background: #111; color: #0f0; border: 1px solid #444; padding: 10px; font-family: monospace; resize: vertical; box-sizing: border-box; }
+      input[type="text"] { width: 100%; padding: 10px; background: #111; color: white; border: 1px solid #444; box-sizing: border-box; }
+      
+      #view-target { justify-content: center; align-items: center; background: black; }
+      #target-image-display { max-width: 90%; max-height: 80%; object-fit: contain; border: 5px solid white; border-radius: 8px; }
+
+      #ui-layer-3d { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; }
+      #ui-layer-3d.hidden { display: none !important; }
+      
+      /* 编辑器面板 - 桌面端默认样式 (右侧边栏) */
+      #editor-panel {
+        position: absolute; top: 0; right: 0; width: 300px; height: 100%;
+        background: rgba(30, 30, 30, 0.95); padding: 20px; box-sizing: border-box;
+        overflow-y: auto; pointer-events: auto;
+        transform: translateX(100%); transition: transform 0.3s ease;
+        display: flex; flex-direction: column;
+        border-left: 1px solid #444;
+      }
+      #editor-panel.active { transform: translateX(0); }
+
+      #ar-overlay {
+        position: absolute; bottom: 30px; left: 0; width: 100%;
+        text-align: center; pointer-events: auto; display: none;
+      }
+
+      .btn {
+        background: #444; color: white; border: none; padding: 10px 20px;
+        border-radius: 6px; cursor: pointer; font-weight: bold;
+        transition: 0.2s; display: inline-block;
+        /* 防止文本过长换行 */
+        white-space: nowrap; 
+      }
+      .btn-primary { background: #2196F3; }
+      .btn-success { background: #4CAF50; }
+      .btn-warning { background: #FF9800; color: black; }
+      .btn-back { position: absolute; top: 20px; left: 20px; z-index: 100; pointer-events: auto; }
+      .btn:hover { filter: brightness(1.1); }
+
+      .control-group { margin-bottom: 12px; }
+      .control-group label { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
+      /* 增大滑块的可触控区域 */
+      .control-group input[type=range] { width: 100%; height: 20px; } 
+      .control-group input[type=text] { 
+          width: 100%; padding: 8px; background: #222; border: 1px solid #555; 
+          color: #eee; border-radius: 4px; box-sizing: border-box; font-size: 12px;
+      }
+      .flex-row { display: flex; gap: 5px; }
+      .section-title { font-size: 14px; color: #FFF; font-weight: bold; margin: 15px 0 10px 0; display: block; border-bottom: 1px solid #555; padding-bottom: 5px; }
+
+      #scanning-msg {
+        display: inline-block; color: white; background: rgba(0,0,0,0.7);
+        padding: 12px 24px; border-radius: 30px; font-weight: bold;
+        backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.2);
+      }
+      #scanning-msg.found { background: rgba(46, 204, 113, 0.9); transform: scale(1.05); }
+
+      #loading-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.8); z-index: 2000;
+        display: flex; justify-content: center; align-items: center;
+        flex-direction: column; color: white;
+      }
+      #loading-overlay.hidden { display: none; }
+      .spinner {
+        border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid #4fc3f7;
+        border-radius: 50%; width: 40px; height: 40px;
+        animation: spin 1s linear infinite; margin-bottom: 15px;
+      }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+      #global-message {
+        position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+        padding: 15px 30px; border-radius: 8px; z-index: 3000;
+        display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); width: 80%; text-align: center;
+      }
+      .msg-success { background: #4CAF50; color: white; }
+      .msg-error { background: #f44336; color: white; }
+
+      /* ========================================= */
+      /* 📱 移动端适配 (Max Width: 768px) */
+      /* ========================================= */
+      @media (max-width: 768px) {
+        /* 1. 主页调整 */
+        #view-home { padding: 20px 15px; }
+        .logo { font-size: 20px; margin-bottom: 30px; }
+        .card-grid { grid-template-columns: 1fr; gap: 15px; } /* 单列显示 */
+        .card { padding: 20px; flex-direction: row; justify-content: flex-start; text-align: left; }
+        .card-icon { font-size: 32px; margin-bottom: 0; margin-right: 20px; }
+        .config-section { padding: 15px; margin-bottom: 50px; } /* 底部留白 */
+
+        /* 2. 编辑器面板改到底部 (Bottom Sheet) */
+        #editor-panel {
+          width: 100%;
+          height: 50vh; /* 占用半屏高度 */
+          top: auto;
+          bottom: 0;
+          right: 0;
+          left: 0;
+          border-left: none;
+          border-top: 1px solid #444;
+          border-radius: 20px 20px 0 0; /* 圆角 */
+          transform: translateY(100%); /* 向下隐藏 */
+          padding-bottom: 30px; /* 避开底部手势条 */
+        }
+        #editor-panel.active {
+          transform: translateY(0);
+        }
+
+        /* 3. 按钮位置调整 */
+        .btn-back { top: 10px; left: 10px; padding: 8px 12px; font-size: 14px; }
+        
+        /* 4. AR 覆盖层上移，避免被底部手势遮挡 */
+        #ar-overlay { bottom: 60px; }
+        
+        /* 5. 增大点击区域 */
+        .control-group label { font-size: 13px; padding-top: 5px; }
+        .checkbox-group label { font-size: 14px; padding: 5px 0; }
+        
+        /* 6. 滚动优化 */
+        #editor-panel, .view-section {
+          -webkit-overflow-scrolling: touch; /* iOS平滑滚动 */
+        }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- Loading -->
+    <div id="loading-overlay" class="hidden">
+        <div class="spinner"></div>
+        <div id="loading-text">正在初始化 AR...</div>
+    </div>
+
+    <!-- Message -->
+    <div id="global-message"></div>
+
+    <!-- Home View -->
+    <div id="view-home" class="view-section">
+        <div class="logo">🌌 WebXR AR Portal</div>
+        
+        <div class="card-grid">
+            <div class="card" onclick="app.navigateTo('ar')">
+                <div class="card-icon">🚀</div>
+                <div>
+                    <div class="card-title">进入 AR 场景</div>
+                    <div class="card-desc">启动摄像头进行识别</div>
+                </div>
+            </div>
+            <div class="card" onclick="app.navigateTo('editor')">
+                <div class="card-icon">🎨</div>
+                <div>
+                    <div class="card-title">编辑场景</div>
+                    <div class="card-desc">调整模型、布局与配置</div>
+                </div>
+            </div>
+            <div class="card" onclick="app.navigateTo('target')">
+                <div class="card-icon">🖼️</div>
+                <div>
+                    <div class="card-title">查看识别图</div>
+                    <div class="card-desc">全屏显示 Target Image</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="config-section">
+            <h4 style="margin-top:0;">⚙️ AR 场景数据配置 (JSON)</h4>
+            <div class="config-tabs">
+                <button class="tab-btn active" onclick="app.switchConfigTab('upload')">📄 上传文件</button>
+                <button class="tab-btn" onclick="app.switchConfigTab('paste')">📝 粘贴文本</button>
+                <button class="tab-btn" onclick="app.switchConfigTab('url')">🔗 URL 链接</button>
+            </div>
+            <div id="cfg-upload" class="input-area">
+                <input type="file" id="json-file-input" accept=".json" style="padding: 10px; background: #333; width:100%">
+            </div>
+            <div id="cfg-paste" class="input-area hidden">
+                <textarea id="json-text-input" placeholder='{"model": {"url": "..."}}'></textarea>
+            </div>
+            <div id="cfg-url" class="input-area hidden">
+                <input type="text" id="json-url-input" placeholder="https://example.com/scene.json">
+            </div>
+            <button class="btn btn-warning" onclick="app.loadJsonConfig()">💾 加载并应用 JSON 配置</button>
+            <span id="config-status" style="margin-left: 10px; font-size: 12px; color: #888;">使用默认配置</span>
+        </div>
+    </div>
+
+    <!-- Target View -->
+    <div id="view-target" class="view-section hidden">
+        <button class="btn btn-back" onclick="app.navigateTo('home')">⬅ 返回主页</button>
+        <img id="target-image-display" src="https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/image-tracking/assets/card-example/card.png" />
+        <p style="position: absolute; bottom: 20px; color: #aaa;">请使用另一台设备扫描此图</p>
+    </div>
+
+    <!-- 3D/AR UI -->
+    <div id="ui-layer-3d" class="hidden">
+        <button id="btn-exit-ar" class="btn btn-back hidden" onclick="app.navigateTo('home')">⬅ 退出 AR</button>
+        <button id="btn-exit-editor" class="btn btn-back hidden" onclick="app.navigateTo('home')">⬅ 退出编辑</button>
+
+        <div id="editor-panel">
+            <h3 style="margin-bottom: 5px;">🎨 场景编辑器</h3>
+            <p style="font-size:12px; color:#888; margin-bottom:15px;">在下方调整参数</p>
+            
+            <span class="section-title">🖼️ 识别图设置</span>
+            <div class="control-group">
+                <label>Mind 文件 URL (.mind)</label>
+                <input type="text" id="mind-url-input" placeholder="https://.../targets.mind">
+            </div>
+            <div class="control-group">
+                <label>识别图图片 URL (.png/.jpg)</label>
+                <input type="text" id="target-img-url-input" placeholder="https://.../card.png">
+            </div>
+            <div class="control-group">
+                <button class="btn btn-warning" style="width:100%" onclick="document.getElementById('img-upload').click()">🖼️ 上传参考贴图文件</button>
+                <input type="file" id="img-upload" accept="image/*" style="display: none;" />
+                <div class="checkbox-group" style="margin-top:5px;">
+                    <input type="checkbox" id="toggle-ref-plane" checked> <label for="toggle-ref-plane">显示参考图</label>
+                </div>
+            </div>
+
+            <span class="section-title">📦 模型资源</span>
+            <div class="control-group">
+                <label>.glb 模型 URL</label>
+                <div class="flex-row">
+                    <input type="text" id="model-url-input" placeholder="https://.../model.glb" style="flex:1">
+                    <button class="btn btn-primary" style="width:auto; padding:0 15px;" onclick="app.loadModelFromUrl()">Load</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <button class="btn btn-primary" style="width:100%" onclick="document.getElementById('model-upload').click()">📂 上传本地模型</button>
+                <div id="model-name" class="status-text">当前: 默认</div>
+                <input type="file" id="model-upload" accept=".glb,.gltf" style="display: none;" />
+            </div>
+
+            <span class="section-title">📐 空间 & 模型</span>
+            <div class="control-group"><label>宽度 (Width)</label> <input type="range" id="b-width" min="0.5" max="3" step="0.05"></div>
+            <div class="control-group"><label>深度 (Depth)</label> <input type="range" id="b-depth" min="0.1" max="5" step="0.1"></div>
+            <div class="control-group"><label>缩放 (Scale)</label> <input type="range" id="m-scale" min="0.05" max="2.0" step="0.01"></div>
+            <div class="control-group"><label>旋转 Y (Rot)</label> <input type="range" id="m-rot-y" min="0" max="360" step="1"></div>
+            <div class="control-group"><label>位置 Y (Pos Y)</label> <input type="range" id="m-pos-y" min="-2" max="2" step="0.05"></div>
+            <div class="control-group"><label>位置 Z (Pos Z)</label> <input type="range" id="m-pos-z" min="-3" max="1" step="0.05"></div>
+
+            <div style="height: 20px;"></div> <!-- 垫高底部 -->
+            <button class="btn btn-success" style="width:100%; margin-bottom: 20px; height:50px;" onclick="app.saveScene()">💾 保存场景配置</button>
+        </div>
+
+        <div id="ar-overlay">
+            <div id="scanning-msg">📷 请对准识别图</div>
+        </div>
+    </div>
+
+    <!-- A-Frame Scene -->
+    <a-scene 
+      color-space="sRGB" 
+      renderer="colorManagement: true, physicallyCorrectLights" 
+      vr-mode-ui="enabled: false" 
+      device-orientation-permission-ui="enabled: false">
+      
+      <a-assets id="assets-container">
+        <img id="wallTexture" src="https://cdn.aframe.io/360-image-gallery-boilerplate/img/city.jpg" crossorigin="anonymous" />
+        <img id="defaultRef" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" />
+      </a-assets>
+
+      <a-light type="ambient" color="#FFF" intensity="0.6"></a-light>
+      <a-light type="directional" color="#FFF" intensity="1.2" position="1 2 1"></a-light>
+
+      <a-camera id="main-camera" position="0 0 2.5" look-controls="enabled: false"></a-camera>
+
+      <a-entity id="editor-root" visible="false">
+          <a-entity id="content-template">
+              <a-plane id="ref-plane" position="0 0 0.001" material="src: #defaultRef; opacity: 1; transparent: true; side: double; shader: flat; color: #FFF"></a-plane>
+              
+              <a-entity id="occlusion-mask-group">
+                  <a-plane id="mask-top" width="10" height="10" hider-material></a-plane>
+                  <a-plane id="mask-bottom" width="10" height="10" hider-material></a-plane>
+                  <a-plane id="mask-left" width="10" height="10" hider-material></a-plane>
+                  <a-plane id="mask-right" width="10" height="10" hider-material></a-plane>
+              </a-entity>
+
+              <a-entity id="room-container">
+                  <a-box id="room-box-fill" class="room-shape" material="color: #222222; opacity: 0.8; transparent: true; side: back"></a-box>
+                  <a-light type="point" position="0 0.5 0.5" intensity="0.8" distance="5"></a-light>
+              </a-entity>
+
+              <a-entity id="editor-model-entity" class="target-model"></a-entity>
+              <a-box id="editor-fallback-box" class="fallback-box" visible="false" material="color: red; wireframe: true"></a-box>
+          </a-entity>
+          <a-grid id="editor-grid" material="src: https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/assets/grid.png; repeat: 10 10; transparent: true; opacity: 0.3" geometry="primitive: plane; width: 10; height: 10;" rotation="-90 0 0" position="0 -1 0"></a-grid>
+      </a-entity>
+
+      <a-entity mindar-image-target="targetIndex: 0" id="target-entity">
+          <a-entity id="ar-content-anchor"></a-entity>
+      </a-entity>
+
+    </a-scene>
+
+    <script>
+      const app = {
+        // 核心数据 (默认值)
+        sceneData: {
+            mindUrl: "https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/image-tracking/assets/card-example/card.mind",
+            model: { url: null, scale: {x:0.2, y:0.2, z:0.2}, rotation: {x:0, y:0, z:0}, position: {x:0, y:-0.375, z:-1} },
+            room: { width: 1, height: 0.75, depth: 1 },
+            referenceImage: { url: null, textureId: '#defaultRef', aspectRatio: 0.75, visible: true }
+        },
+        currentMode: 'home', 
+        isARRunning: false, 
+        currentMindUrl: null,
+        
+        ui3d: document.getElementById('ui-layer-3d'),
+        editorPanel: document.getElementById('editor-panel'),
+        arOverlay: document.getElementById('ar-overlay'),
+        sceneEl: document.querySelector('a-scene'),
+        loader: document.getElementById('loading-overlay'),
+        
+        init: function() {
+            this.bindInputs();
+            this.sceneEl.pause();
+            
+            if (!AFRAME.components['hider-material']) {
+                AFRAME.registerComponent('hider-material', {
+                    init: function () {
+                        const apply = () => {
+                            const mesh = this.el.getObject3D('mesh');
+                            if (mesh) { mesh.material.colorWrite = false; mesh.material.depthWrite = true; }
+                        };
+                        this.el.getObject3D('mesh') ? apply() : this.el.addEventListener('loaded', apply);
+                    }
+                });
+            }
+            this.currentMindUrl = null;
+        },
+
+        navigateTo: function(viewId) {
+            document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
+            this.ui3d.classList.add('hidden');
+            this.editorPanel.classList.remove('active');
+            this.arOverlay.style.display = 'none';
+            document.getElementById('btn-exit-ar').classList.add('hidden');
+            document.getElementById('btn-exit-editor').classList.add('hidden');
+
+            if (this.isARRunning && viewId !== 'ar') {
+                try { this.sceneEl.systems['mindar-image-system'].stop(); } catch(e) {}
+                this.isARRunning = false;
+            }
+
+            document.getElementById('editor-root').setAttribute('visible', 'false');
+            this.currentMode = viewId;
+
+            if (viewId === 'home') {
+                document.getElementById('view-home').classList.remove('hidden');
+                this.sceneEl.pause(); 
+            } 
+            else if (viewId === 'target') {
+                document.getElementById('view-target').classList.remove('hidden');
+                this.sceneEl.pause();
+            }
+            else if (viewId === 'editor') {
+                this.sceneEl.play(); 
+                this.ui3d.classList.remove('hidden');
+                this.editorPanel.classList.add('active');
+                document.getElementById('btn-exit-editor').classList.remove('hidden');
+                document.getElementById('editor-root').setAttribute('visible', 'true');
+                this.sceneEl.setAttribute('background', 'color', '#222222');
+                this.resetCamera('editor');
+                this.syncEditorUI(); 
+            }
+            else if (viewId === 'ar') {
+                this.sceneEl.play();
+                this.ui3d.classList.remove('hidden');
+                this.arOverlay.style.display = 'block';
+                document.getElementById('btn-exit-ar').classList.remove('hidden');
+                this.sceneEl.removeAttribute('background');
+                this.startARProcess();
+            }
+        },
+
+        startARProcess: function() {
+            this.buildARScene();
+            
+            const newUrl = this.sceneData.mindUrl;
+            const forceReload = (newUrl !== this.currentMindUrl);
+            
+            if (forceReload || !this.isARRunning) {
+                console.log("Re-initializing AR with:", newUrl);
+                this.loader.classList.remove('hidden');
+                
+                if (this.isARRunning) {
+                    try { this.sceneEl.systems['mindar-image-system'].stop(); } catch(e){}
+                    this.isARRunning = false;
+                }
+                
+                try { this.sceneEl.removeAttribute('mindar-image'); } catch(e) {}
+                
+                setTimeout(() => {
+                    this.currentMindUrl = newUrl;
+                    const finalUrl = newUrl; 
+                    
+                    const mindStr = `imageTargetSrc: ${finalUrl}; autoStart: false; uiLoading: no; uiError: no; filterMinCF:0.0001; filterBeta: 0.001;`;
+                    this.sceneEl.setAttribute('mindar-image', mindStr);
+                    
+                    const startSys = () => {
+                        this.sceneEl.systems['mindar-image-system'].start();
+                        this.isARRunning = true;
+                        this.loader.classList.add('hidden');
+                    };
+
+                    if (this.sceneEl.components['mindar-image']) {
+                         setTimeout(startSys, 200);
+                    } else {
+                        this.sceneEl.addEventListener('componentinitialized', function(evt) {
+                            if (evt.detail.name === 'mindar-image') {
+                                startSys();
+                            }
+                        }, { once: true });
+                    }
+                }, 200);
+            } else {
+                if (!this.isARRunning) {
+                    if(this.sceneEl.systems['mindar-image-system']) {
+                        this.sceneEl.systems['mindar-image-system'].start();
+                        this.isARRunning = true;
+                    }
+                }
+            }
+        },
+
+        resetCamera: function(mode) {
+            const cam = document.getElementById('main-camera');
+            cam.setAttribute('position', '0 0 2.5');
+            cam.setAttribute('rotation', '0 0 0');
+        },
+
+        switchConfigTab: function(tabName) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('cfg-upload').classList.add('hidden');
+            document.getElementById('cfg-paste').classList.add('hidden');
+            document.getElementById('cfg-url').classList.add('hidden');
+            document.getElementById('cfg-' + tabName).classList.remove('hidden');
+            this.configMode = tabName;
+        },
+
+        loadJsonConfig: async function() {
+            let dataStr = null;
+            try {
+                if (this.configMode === 'upload') {
+                    const file = document.getElementById('json-file-input').files[0];
+                    if (!file) throw new Error("请选择文件");
+                    dataStr = await file.text();
+                } else if (this.configMode === 'paste') {
+                    dataStr = document.getElementById('json-text-input').value;
+                } else if (this.configMode === 'url') {
+                    const url = document.getElementById('json-url-input').value;
+                    if(!url) throw new Error("请输入 URL");
+                    const res = await fetch(url);
+                    dataStr = await res.text();
+                }
+
+                if (!dataStr) throw new Error("内容为空");
+                
+                const json = JSON.parse(dataStr);
+                console.log("正在解析 JSON:", json);
+                
+                for (const key in json) {
+                    if (key !== 'model' && key !== 'room' && key !== 'referenceImage') {
+                        this.sceneData[key] = json[key];
+                    }
+                }
+                if (json.model) {
+                    this.sceneData.model = { ...this.sceneData.model, ...json.model };
+                }
+                if (json.room) {
+                    this.sceneData.room = { ...this.sceneData.room, ...json.room };
+                }
+                if (json.referenceImage) {
+                    this.sceneData.referenceImage = { ...this.sceneData.referenceImage, ...json.referenceImage };
+                }
+                
+                console.log("sceneData 已更新:", this.sceneData);
+                this.showMessage("✅ 配置已加载", "success");
+                document.getElementById('config-status').textContent = "已加载自定义配置";
+                
+                if (this.sceneData.referenceImage && this.sceneData.referenceImage.url) {
+                    this.updateReferenceImage(this.sceneData.referenceImage.url);
+                }
+
+                this.syncEditorUI();
+                
+            } catch (e) {
+                console.error(e);
+                this.showMessage("❌ 加载失败: " + e.message, "error");
+            }
+        },
+
+        updateReferenceImage: function(url, isBlob = false) {
+            const img = new Image();
+            if(!isBlob) img.crossOrigin = "Anonymous"; 
+            img.onload = () => {
+                const ratio = img.height / img.width;
+                this.sceneData.referenceImage.aspectRatio = ratio;
+                this.sceneData.referenceImage.url = url;
+                document.getElementById('target-image-display').src = url;
+                
+                const newId = 'tex-' + Date.now();
+                const imgEl = document.createElement('img');
+                imgEl.id = newId; 
+                if(!isBlob) imgEl.crossOrigin = "Anonymous";
+                imgEl.src = url;
+                document.getElementById('assets-container').appendChild(imgEl);
+                this.sceneData.referenceImage.textureId = '#' + newId;
+                
+                this.recalcDims();
+                this.update3DView();
+            };
+            img.src = url;
+        },
+        
+        loadModelFromUrl: function() {
+            const url = document.getElementById('model-url-input').value.trim();
+            if (!url) return;
+            this.sceneData.model.url = url;
+            let fileName = url.substring(url.lastIndexOf('/')+1);
+            if(fileName.length > 20) fileName = fileName.substring(0, 17) + '...';
+            document.getElementById('model-name').textContent = `当前: ${fileName} (URL)`;
+            this.update3DView();
+            this.showMessage("🔄 正在加载远程模型...", "success");
+        },
+
+        bindInputs: function() {
+            const inputs = {
+                'm-scale': (v) => this.sceneData.model.scale = {x:v,y:v,z:v},
+                'm-rot-y': (v) => this.sceneData.model.rotation.y = v,
+                'm-pos-y': (v) => this.sceneData.model.position.y = v,
+                'm-pos-z': (v) => this.sceneData.model.position.z = v,
+                'b-width': (v) => { this.sceneData.room.width = v; this.recalcDims(); },
+                'b-depth': (v) => this.sceneData.room.depth = v
+            };
+
+            for (const [id, handler] of Object.entries(inputs)) {
+                document.getElementById(id).addEventListener('input', (e) => {
+                    handler(parseFloat(e.target.value));
+                    this.update3DView();
+                });
+            }
+
+            const mindInput = document.getElementById('mind-url-input');
+            mindInput.addEventListener('input', (e) => this.sceneData.mindUrl = e.target.value);
+            mindInput.addEventListener('change', (e) => this.sceneData.mindUrl = e.target.value);
+
+            document.getElementById('target-img-url-input').addEventListener('change', (e) => {
+                const url = e.target.value;
+                if(!url) return;
+                this.updateReferenceImage(url, false);
+            });
+
+            document.getElementById('toggle-ref-plane').addEventListener('change', (e) => {
+                this.sceneData.referenceImage.visible = e.target.checked;
+                document.getElementById('ref-plane').setAttribute('visible', e.target.checked);
+            });
+
+            document.getElementById('model-upload').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const url = URL.createObjectURL(file);
+                this.sceneData.model.url = url;
+                document.getElementById('model-name').textContent = `当前: ${file.name}`;
+                this.update3DView();
+            });
+
+            document.getElementById('img-upload').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const url = URL.createObjectURL(file);
+                this.updateReferenceImage(url, true);
+            });
+        },
+
+        syncEditorUI: function() {
+            document.getElementById('m-scale').value = this.sceneData.model.scale.x;
+            document.getElementById('m-rot-y').value = this.sceneData.model.rotation.y;
+            document.getElementById('m-pos-y').value = this.sceneData.model.position.y;
+            document.getElementById('m-pos-z').value = this.sceneData.model.position.z;
+            document.getElementById('b-width').value = this.sceneData.room.width;
+            document.getElementById('b-depth').value = this.sceneData.room.depth;
+            document.getElementById('toggle-ref-plane').checked = this.sceneData.referenceImage.visible;
+            document.getElementById('mind-url-input').value = this.sceneData.mindUrl;
+            
+            if (this.sceneData.referenceImage.url && !this.sceneData.referenceImage.url.startsWith('blob:')) {
+                document.getElementById('target-img-url-input').value = this.sceneData.referenceImage.url;
+            }
+            if (this.sceneData.model.url && !this.sceneData.model.url.startsWith('blob:')) {
+                document.getElementById('model-url-input').value = this.sceneData.model.url;
+            } else {
+                document.getElementById('model-url-input').value = "";
+            }
+            
+            this.recalcDims();
+            this.update3DView();
+        },
+
+        recalcDims: function() {
+            this.sceneData.room.height = this.sceneData.room.width * this.sceneData.referenceImage.aspectRatio;
+        },
+
+        update3DView: function() {
+            const d = this.sceneData;
+            const modelEl = document.getElementById('editor-model-entity');
+            const refPlane = document.getElementById('ref-plane');
+            const container = document.getElementById('room-container');
+            const boxFill = document.getElementById('room-box-fill');
+            const masks = {
+                top: document.getElementById('mask-top'),
+                bottom: document.getElementById('mask-bottom'),
+                left: document.getElementById('mask-left'),
+                right: document.getElementById('mask-right')
+            };
+
+            modelEl.setAttribute('scale', d.model.scale);
+            modelEl.setAttribute('position', d.model.position);
+            modelEl.setAttribute('rotation', {x: 0, y: d.model.rotation.y, z: 0});
+            if (d.model.url) modelEl.setAttribute('gltf-model', d.model.url);
+
+            refPlane.setAttribute('width', d.room.width);
+            refPlane.setAttribute('height', d.room.height);
+            refPlane.setAttribute('visible', d.referenceImage.visible);
+            if (d.referenceImage.textureId) {
+                refPlane.setAttribute('material', {src: d.referenceImage.textureId, transparent: true, opacity: 1, shader: 'flat', side: 'double', color: '#FFF'});
+            }
+
+            const boxZ = -d.room.depth / 2;
+            container.setAttribute('position', {x:0, y:0, z: boxZ});
+            boxFill.setAttribute('width', d.room.width);
+            boxFill.setAttribute('height', d.room.height);
+            boxFill.setAttribute('depth', d.room.depth);
+
+            const ms = 10; 
+            const w = d.room.width; const h = d.room.height;
+            masks.top.setAttribute('position', {x:0, y: h/2 + ms/2, z:0});
+            masks.bottom.setAttribute('position', {x:0, y: -(h/2 + ms/2), z:0});
+            masks.left.setAttribute('position', {x: -(w/2 + ms/2), y:0, z:0});
+            masks.right.setAttribute('position', {x: w/2 + ms/2, y:0, z:0});
+        },
+
+        saveScene: function() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.sceneData, null, 2));
+            const dlNode = document.createElement('a');
+            dlNode.setAttribute("href", dataStr);
+            dlNode.setAttribute("download", "ar-scene-config.json");
+            document.body.appendChild(dlNode);
+            dlNode.click();
+            dlNode.remove();
+
+            this.showMessage("💾 场景已保存并更新配置", "success");
+        },
+
+        buildARScene: function() {
+            const anchor = document.getElementById('ar-content-anchor');
+            anchor.innerHTML = ""; 
+            
+            const template = document.getElementById('content-template');
+            const clone = template.cloneNode(true);
+            
+            const d = this.sceneData;
+
+            const arModel = clone.querySelector('.target-model');
+            const arRefPlane = clone.querySelector('#ref-plane');
+            const arContainer = clone.querySelector('#room-container');
+            const arBoxFill = clone.querySelector('#room-box-fill');
+            const mTop = clone.querySelector('#mask-top');
+            const mBottom = clone.querySelector('#mask-bottom');
+            const mLeft = clone.querySelector('#mask-left');
+            const mRight = clone.querySelector('#mask-right');
+
+            if (arModel) {
+                if (d.model.url) {
+                    arModel.setAttribute('gltf-model', d.model.url);
+                    arModel.setAttribute('visible', 'true');
+                } else {
+                    arModel.setAttribute('visible', 'false');
+                }
+                arModel.setAttribute('scale', d.model.scale);
+                arModel.setAttribute('position', d.model.position);
+                arModel.setAttribute('rotation', {x: 0, y: d.model.rotation.y, z: 0});
+            }
+
+            if (arRefPlane) {
+                arRefPlane.setAttribute('width', d.room.width);
+                arRefPlane.setAttribute('height', d.room.height);
+                arRefPlane.setAttribute('visible', d.referenceImage.visible);
+                if (d.referenceImage.textureId) {
+                    arRefPlane.setAttribute('material', {
+                        src: d.referenceImage.textureId, 
+                        transparent: true, opacity: 1, shader: 'flat', side: 'double', color: '#FFF'
+                    });
+                }
+            }
+
+            const boxZ = -d.room.depth / 2;
+            if (arContainer) arContainer.setAttribute('position', {x:0, y:0, z: boxZ});
+            
+            if (arBoxFill) {
+                arBoxFill.setAttribute('width', d.room.width);
+                arBoxFill.setAttribute('height', d.room.height);
+                arBoxFill.setAttribute('depth', d.room.depth);
+            }
+
+            const ms = 10; 
+            const w = d.room.width; const h = d.room.height;
+            if (mTop) mTop.setAttribute('position', {x:0, y: h/2 + ms/2, z:0});
+            if (mBottom) mBottom.setAttribute('position', {x:0, y: -(h/2 + ms/2), z:0});
+            if (mLeft) mLeft.setAttribute('position', {x: -(w/2 + ms/2), y:0, z:0});
+            if (mRight) mRight.setAttribute('position', {x: w/2 + ms/2, y:0, z:0});
+
+            const masks = clone.querySelectorAll('[hider-material]');
+            masks.forEach(el => {
+                el.removeAttribute('hider-material');
+                el.setAttribute('hider-material', '');
+            });
+
+            clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+
+            anchor.appendChild(clone);
+        },
+
+        showMessage: function(msg, type) {
+            const el = document.getElementById('global-message');
+            el.textContent = msg;
+            el.className = type === 'success' ? 'msg-success' : 'msg-error';
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 3000);
+        }
+      };
+
+      window.onload = () => {
+          app.init();
+          app.configMode = 'upload'; 
+      };
+
+      const targetEntity = document.getElementById('target-entity');
+      const scanMsg = document.getElementById('scanning-msg');
+      targetEntity.addEventListener("targetFound", () => {
+          scanMsg.textContent = "✅ 识别成功";
+          scanMsg.classList.add('found');
+          setTimeout(() => { if(app.currentMode==='ar') scanMsg.style.opacity = 0; }, 2000);
+      });
+      targetEntity.addEventListener("targetLost", () => {
+          scanMsg.textContent = "📷 请对准识别图";
+          scanMsg.classList.remove('found');
+          scanMsg.style.opacity = 1;
+      });
+
+    </script>
+  </body>
+</html>
